@@ -1,0 +1,153 @@
+version: "3.8"
+
+services:
+  # --- Infrastructure Services ---
+
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.74.0
+    container_name: jaeger
+    ports:
+      - "16696:16686"
+      - "4317:4317"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Application Services ---
+
+  user-service:
+    build:
+      context: ./users
+      dockerfile: Dockerfile
+    container_name: user
+    ports:
+      - "${USERS_FLASK_PORT}:5000"
+      - "${USERS_GRPC_PORT}:50051"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    # restart: unless-stopped
+
+  tweet-service:
+    build:
+      context: ./tweets
+      dockerfile: Dockerfile
+    container_name: tweet
+    ports:
+      - "${TWEETS_FLASK_PORT}:5000"
+      - "${TWEETS_GRPC_PORT}:50051"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    # restart: unless-stopped
+
+  search-service:
+    build:
+      context: ./search
+      dockerfile: Dockerfile
+    container_name: search
+    ports:
+      - "${SEARCH_FLASK_PORT}:5000"
+      - "${SEARCH_GRPC_PORT}:50051"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    # restart: unless-stopped
+
+  search-worker:
+    build:
+      context: ./search-worker
+      dockerfile: Dockerfile
+    container_name: search-worker
+    env_file:
+      - .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+        restart: true
+      search-service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  rabbitmq_data:
+
+networks:
+  default:
+    driver: bridge

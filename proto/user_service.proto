@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package user_service;
+
+message FollowStruct {
+    string id = 1;
+    string follower_id = 2;
+    string following_id = 3;
+    int64 created_at = 4;
+}
+
+message UserStruct {
+    string id = 1;
+    string email = 2;
+    string username = 3;
+    int32 numTweets = 4;
+    int32 numFollowers = 5;
+    int64 created_at = 6;
+}
+
+message GetUserReq {
+    string user_id = 1;
+}
+
+message GetUserRes {
+    bool valid = 1;
+    UserStruct user = 2;
+}
+
+message IncrementTweetsReq {
+    string user_id = 1;
+}
+
+message IncrementTweetsRes {
+    bool success = 1;
+}
+
+message GetFollowersReq {
+    string user_id = 1;
+}
+
+message GetFollowersRes {
+    repeated FollowStruct followers = 1;
+}
+
+message GetFollowingReq {
+    string user_id = 1;
+}
+
+message GetFollowingRes {
+    repeated FollowStruct follwing = 1;
+}
+
+
+service User {
+    rpc GetUser (GetUserReq) returns (GetUserRes);
+    rpc IncrementsTweets (IncrementTweetsReq) returns (IncrementTweetsRes);
+    rpc GetFollowers(GetFollowersReq) returns (GetFollowersRes);
+    rpc GetFollowing(GetFollowingReq) returns (GetFollowingRes);
+}

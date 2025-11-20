@@ -1,0 +1,56 @@
+# .env - Environment variables for Twitter Clone microservices
+
+# --- PostgreSQL Database Configuration ---
+[Database]
+DB_DATABASE = "twitter_clone"
+DB_USERNAME = "user"
+DB_PASSWORD = "password"
+DB_HOST = "postgres"
+DB_PORT = "5432"
+
+# --- Jager Configuration ---
+[Jaeger]
+JAEGER = "jaeger:4317"
+
+# --- RabbitMQ Configuration ---
+[RabbitMQ]
+RABBITMQ_USERNAME = "server"
+RABBITMQ_PASSWORD = "pass"
+RABBITMQ_HOST = "rabbitmq"
+RABBITMQ_URL = "amqp://server:pass@rabbitmq:5672"
+
+# --- Redis Configuration ---
+[Redis]
+REDIS_HOST = "redis"
+REDIS_PORT = 6379
+
+# --- Elasticsearch Configuration ---
+[Elasticsearch]
+ELASTICSEARCH_URL = "http://elasticsearch:9200"
+
+# --- JWT Secret Key ---
+[JWT]
+JWT_SECRET = "test"
+JWT_ALGO = "HS256"
+
+
+# User Service
+[UserService]
+USERS_FLASK_PORT = 5000
+USERS_GRPC_PORT = 50050
+USER_SERVICE_GRPC_TARGET = "users-service:50051"
+
+# Tweet Service
+[TweetService]
+TWEETS_FLASK_PORT = 5001
+TWEETS_GRPC_PORT = 50051
+# The gRPC target for the User Service, as seen from the tweets-service container
+
+# Feed Service
+[FeedService]
+FEED_FLASK_PORT = 5002
+
+# Search Service
+[SearchService]
+SEARCH_FLASK_PORT = 5003
+SEARCH_GRPC_PORT = 50053
