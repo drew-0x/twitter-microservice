@@ -1,88 +1,103 @@
 import logging
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
-
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import and_
 
-from src.dependencies.auth import VerifyToken
-from src.models import User
-from src.models import Follow
-
-from src.dependencies.config import Config
-
-from src.dependencies.db import db_session as DB
+from src.dependencies.auth import VerifyToken, UserToken
+from src.dependencies.db import get_db
+from src.models import User, Follow
 from src.schemas import CreateFollowerRequset
-
-config = Config()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.post("/follow")
-def CreateFollow(follow: CreateFollowerRequset, user=Depends(VerifyToken)):
-
+def CreateFollow(
+    follow: CreateFollowerRequset,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
     if follow.following_id == user.id:
-        return ({"error": "can not follow self"}), 400
+        raise HTTPException(status_code=400, detail="can not follow self")
 
-    follow = Follow(user.id, follow.following_id)
+    new_follow = Follow(user.id, follow.following_id)
 
-    userFollowing: User = User.query.filter_by(id=follow.following_id).first()
+    userFollowing: User = db.query(User).filter_by(id=new_follow.following_id).first()
 
     if not userFollowing:
-        raise HTTPException(status_code=403, detail="user not found")
+        raise HTTPException(status_code=404, detail="user not found")
     userFollowing.increment_followers()
 
     try:
-        DB.add(follow)
-        DB.commit()
+        db.add(new_follow)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        return ({"error": str(e)}), 500
+        db.rollback()
+        logger.error(f"Database error creating follow: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
-    return ("User Followed"), 200
+    return {"message": "User Followed"}
 
 
 @router.get("/follow")
-def GetUsersFollowers(user=Depends(VerifyToken)):
-    followers = Follow.query.filter_by(following_id=user.id).all()
+def GetUsersFollowers(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    followers = db.query(Follow).filter_by(following_id=user.id).all()
 
     if not followers:
-        return {"eror": "could not find any followers"}
-    return ({"result": [follower.to_dict() for follower in followers]}), 200
+        return {"result": []}
+    return {"result": [follower.to_dict() for follower in followers]}
 
 
 @router.get("/following")
-def GetUsersFollowing(user=Depends(VerifyToken)):
-    followers = Follow.query.filter_by(follower_id=user.id).all()
+def GetUsersFollowing(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    following = db.query(Follow).filter_by(follower_id=user.id).all()
 
-    if not followers:
-        return {"eror": "could not find any followers"}
-    return ({"result": [follower.to_dict() for follower in followers]}), 200
+    if not following:
+        return {"result": []}
+    return {"result": [f.to_dict() for f in following]}
 
 
-@router.get("/follow/<id>")
-def GetFollowByID(id: str):
+@router.get("/follow/{id}")
+def GetFollowByID(
+    id: str,
+    db: Session = Depends(get_db),
+):
     if not id:
-        return ({"eror": "invalid id"}), 401
-    follow = DB.query(Follow).filter_by(id=id).first()
+        raise HTTPException(status_code=400, detail="invalid id")
+    follow = db.query(Follow).filter_by(id=id).first()
     if not follow:
-        return ({"eror": "could not find follow"}), 404
-    return ({"result": follow.to_dict()}), 200
+        raise HTTPException(status_code=404, detail="could not find follow")
+    return {"result": follow.to_dict()}
 
 
-@router.delete("/follow/<following_id>")
-def DeleteFollow(following_id: str, user: User = Depends(VerifyToken)):
-    follow = DB.query(Follow).filter(
+@router.delete("/follow/{following_id}")
+def DeleteFollow(
+    following_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    follow = db.query(Follow).filter(
         and_(Follow.follower_id == user.id, Follow.following_id == following_id)  # type: ignore
-    )
+    ).first()
+
+    if not follow:
+        raise HTTPException(status_code=404, detail="follow not found")
 
     try:
-        DB.delete(follow)
-        DB.commit()
+        db.delete(follow)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        return ({"error": str(e)}), 500
+        db.rollback()
+        logger.error(f"Database error deleting follow: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
-    return (), 204
+    return Response(status_code=204)

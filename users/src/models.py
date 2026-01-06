@@ -1,4 +1,14 @@
-from sqlalchemy import INT, Column, UUID, DateTime, String, false, func
+from sqlalchemy import (
+    INT,
+    Column,
+    UUID,
+    DateTime,
+    Index,
+    String,
+    UniqueConstraint,
+    false,
+    func,
+)
 
 from bcrypt import hashpw, checkpw, gensalt
 from src.dependencies.db import Base
@@ -10,12 +20,16 @@ class User(Base):
     __tablename__ = "actors"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    email = Column(String, nullable=False)
+    email = Column(String, nullable=False, unique=True)
     password = Column(String, nullable=False)
-    username = Column(String, nullable=False)
+    username = Column(String, nullable=False, unique=True)
     num_tweets = Column(INT, default=0)
     num_followers = Column(INT, default=0)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_users_created_at", "created_at"),
+    )
 
     def __init__(self, email, plaintext_password, username) -> None:
         self.email = email
@@ -58,6 +72,13 @@ class Follow(Base):
     follower_id = Column(UUID(as_uuid=True), nullable=False)
     following_id = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("follower_id", "following_id", name="unique_follow"),
+        Index("ix_follows_following_id", "following_id"),
+        Index("ix_follows_follower_id", "follower_id"),
+        Index("ix_follows_created_at", "created_at"),
+    )
 
     def __init__(self, follower_id, following_id) -> None:
         self.follower_id = follower_id
