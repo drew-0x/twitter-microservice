@@ -57,3 +57,14 @@ env/
 # Other
 *.log
 *coverage.xml
+
+# Private/Local files (not for public repo)
+.claude/
+.mcp.json
+CLAUDE.md
+PHASE_1_TODO.md
+PORTFOLIO_FIXES.md
+WEEK_1_IMPLEMENTATION_GUIDE.md
+INTEGRATION_TESTS.md
+TESTING.md
+users/demo_di.py
