@@ -1,38 +1,42 @@
 import logging
-from os import stat
 
 from fastapi import APIRouter, Depends, HTTPException
-
-from src.dependencies.mq import produce_message
-
+from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.models import Tweet, TweetRepost, ReplyTweet, TweetLike
-
-from src.grpc.client import IncrementTweets
-
+from src.dependencies.mq import produce_message
+from src.dependencies.db import get_db
 from src.dependencies.auth import UserToken, VerifyToken
-
-
-from src.dependencies.db import db_session as DB
+from src.models import Tweet, TweetRepost, ReplyTweet, TweetLike
+from src.grpc.client import IncrementTweets
 from src.schemas import CreateReplyRequest, CreateTweetRequest
-
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/tweet")
-def createTweet(req: CreateTweetRequest, user: UserToken = Depends(VerifyToken)):
+@router.get("/health")
+def health_check():
+    """Health check endpoint for load balancers and k8s probes."""
+    return {"status": "healthy", "service": "tweets-service"}
 
+
+@router.post("/tweet")
+def createTweet(
+    req: CreateTweetRequest,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
     tweet = Tweet(user.id, req.content)
 
     try:
-        DB.add(tweet)
-        DB.commit()
+        db.add(tweet)
+        db.commit()
+        db.refresh(tweet)
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error creating tweet: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     IncrementTweets(user.id)
 
@@ -41,12 +45,15 @@ def createTweet(req: CreateTweetRequest, user: UserToken = Depends(VerifyToken))
     produce_message(  # Produce to the tweet event queue
         tweet.to_dict(), "tweet_events", "tweet.create"
     )
-    return ({"message": "tweet created"}), 201
+    return {"message": "tweet created"}
 
 
 @router.get("/tweet")
-def getTweets(user: UserToken = Depends(VerifyToken)):
-    tweets = DB.query(Tweet).filter_by(user_id=user.id).all()
+def getTweets(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweets = db.query(Tweet).filter_by(user_id=user.id).all()
 
     if not tweets:
         raise HTTPException(status_code=404, detail="Invalid Request")
@@ -57,59 +64,73 @@ def getTweets(user: UserToken = Depends(VerifyToken)):
 
 
 @router.get("/tweet/{tweet_id}")
-def getTweetByID(tweet_id: str):
-
-    tweet = DB.query(Tweet).filter_by(id=tweet_id).first()
+def getTweetByID(
+    tweet_id: str,
+    db: Session = Depends(get_db),
+):
+    tweet = db.query(Tweet).filter_by(id=tweet_id).first()
 
     if not tweet:
         raise HTTPException(status_code=404, detail="invalid request")
 
-    replyTweets = DB.query(ReplyTweet).filter_by(parent_id=tweet.id).all()
+    replyTweets = db.query(ReplyTweet).filter_by(parent_id=tweet.id).all()
 
-    replyTweetsRes = [tweet.to_dict() for tweet in replyTweets]
+    replyTweetsRes = [t.to_dict() for t in replyTweets]
 
     return {"tweet": tweet.to_dict(), "replys": replyTweetsRes}
 
 
 @router.delete("/tweet/{tweet_id}")
-def deleteTweet(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-    tweet = DB.query(Tweet).filter_by(id=tweet_id).first()
+def deleteTweet(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweet = db.query(Tweet).filter_by(id=tweet_id).first()
 
     if not tweet:
         raise HTTPException(status_code=404, detail="invalid request")
 
     if str(tweet.user_id) != user.id:
-        raise HTTPException(status_code=403, detail="unauthroized")
+        raise HTTPException(status_code=403, detail="unauthorized")
 
     try:
-        DB.delete(tweet)
-        DB.commit()
+        db.delete(tweet)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error deleting tweet: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "tweet deleted"}
 
 
 @router.post("/tweet/reply")
-def createTweetReply(req: CreateReplyRequest, user: UserToken = Depends(VerifyToken)):
-
+def createTweetReply(
+    req: CreateReplyRequest,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
     tweet = ReplyTweet(user.id, req.parent_id, req.content)
 
     try:
-        DB.add(tweet)
-        DB.commit()
+        db.add(tweet)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error creating reply: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     IncrementTweets(user.id)
     return {"message": "tweet created"}
 
 
 @router.get("/tweet/reply")
-def getTweetReplys(user: UserToken = Depends(VerifyToken)):
-    tweets = DB.query(ReplyTweet).filter_by(user_id=user.id).all()
+def getTweetReplys(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweets = db.query(ReplyTweet).filter_by(user_id=user.id).all()
 
     if not tweets:
         raise HTTPException(status_code=404, detail="invalid request")
@@ -120,29 +141,37 @@ def getTweetReplys(user: UserToken = Depends(VerifyToken)):
 
 
 @router.delete("/tweet/reply/{tweet_id}")
-def deleteTweetReply(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-
-    tweet = DB.query(ReplyTweet).filter_by(id=tweet_id).first()
+def deleteTweetReply(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweet = db.query(ReplyTweet).filter_by(id=tweet_id).first()
 
     if not tweet:
         raise HTTPException(status_code=404, detail="invalid request")
 
     if str(tweet.user_id) != user.id:
-        raise HTTPException(status_code=403, detail="unauthroized")
+        raise HTTPException(status_code=403, detail="unauthorized")
 
     try:
-        DB.delete(tweet)
-        DB.commit()
+        db.delete(tweet)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error deleting reply: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "tweet deleted"}
 
 
 @router.post("/tweet/like/{tweet_id}")
-def createLike(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-    tweet: Tweet = DB.query(Tweet).filter_by(id=tweet_id).first()
+def createLike(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweet: Tweet = db.query(Tweet).filter_by(id=tweet_id).first()
 
     if not tweet:
         raise HTTPException(status_code=404, detail="invalid request")
@@ -151,18 +180,22 @@ def createLike(tweet_id: str, user: UserToken = Depends(VerifyToken)):
     tweet.increment_likes()
 
     try:
-        DB.add(like)
-        DB.commit()
+        db.add(like)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error creating like: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "like created"}
 
 
-@router.route("/tweet/like")
-def getLikes(user: UserToken = Depends(VerifyToken)):
-    likes = DB.query(TweetLike).filter_by(user_id=user.id).all()
+@router.get("/tweet/like")
+def getLikes(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    likes = db.query(TweetLike).filter_by(user_id=user.id).all()
 
     if not likes:
         raise HTTPException(status_code=404, detail="invalid request")
@@ -173,33 +206,41 @@ def getLikes(user: UserToken = Depends(VerifyToken)):
 
 
 @router.delete("/tweet/like/{tweet_id}")
-def deleteLike(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-
-    like = DB.query(TweetLike).filter_by(id=tweet_id).first()
+def deleteLike(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    like = db.query(TweetLike).filter_by(id=tweet_id).first()
 
     if not like:
         raise HTTPException(status_code=404, detail="invalid request")
 
     if str(like.user_id) != user.id:
-        raise HTTPException(status_code=403, detail="unauthroized")
+        raise HTTPException(status_code=403, detail="unauthorized")
 
-    tweet = DB.query(Tweet).filter_by(id=like.tweet_id).first()
+    tweet = db.query(Tweet).filter_by(id=like.tweet_id).first()
     if tweet:
         tweet.decrement_likes(1)
 
     try:
-        DB.delete(like)
-        DB.commit()
+        db.delete(like)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error deleting like: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "like deleted"}
 
 
 @router.post("/tweet/repost/{tweet_id}")
-def createRepost(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-    tweet: Tweet = DB.query(Tweet).filter_by(id=tweet_id).first()
+def createRepost(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    tweet: Tweet = db.query(Tweet).filter_by(id=tweet_id).first()
 
     if not tweet:
         raise HTTPException(status_code=404, detail="invalid request")
@@ -208,18 +249,22 @@ def createRepost(tweet_id: str, user: UserToken = Depends(VerifyToken)):
     tweet.increment_reposts()
 
     try:
-        DB.add(repost)
-        DB.commit()
+        db.add(repost)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error creating repost: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "repost created"}
 
 
 @router.get("/tweet/repost")
-def getReposts(user: UserToken = Depends(VerifyToken)):
-    reposts = DB.query(TweetRepost).filter_by(user_id=user.id).all()
+def getReposts(
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    reposts = db.query(TweetRepost).filter_by(user_id=user.id).all()
 
     if not reposts:
         raise HTTPException(status_code=404, detail="invalid request")
@@ -229,32 +274,37 @@ def getReposts(user: UserToken = Depends(VerifyToken)):
     return {"result": res}
 
 
-@router.delete("/tweet/repose/{tweet_id}")
-def deleteRepost(tweet_id: str, user: UserToken = Depends(VerifyToken)):
-    repost = DB.query(TweetRepost).filter_by(id=tweet_id).first()
+@router.delete("/tweet/repost/{tweet_id}")
+def deleteRepost(
+    tweet_id: str,
+    user: UserToken = Depends(VerifyToken),
+    db: Session = Depends(get_db),
+):
+    repost = db.query(TweetRepost).filter_by(id=tweet_id).first()
 
     if not repost:
         raise HTTPException(status_code=404, detail="invalid request")
 
     if str(repost.user_id) != user.id:
-        raise HTTPException(status_code=403, detail="unauthroized")
+        raise HTTPException(status_code=403, detail="unauthorized")
 
-    tweet = DB.query(Tweet).filter_by(id=repost.tweet_id).first()
+    tweet = db.query(Tweet).filter_by(id=repost.tweet_id).first()
     if tweet:
         tweet.decrement_reposts()
 
     try:
-        DB.delete(repost)
-        DB.commit()
+        db.delete(repost)
+        db.commit()
     except SQLAlchemyError as e:
-        DB.rollback()
-        raise HTTPException(status_code=500, detail=f"error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error deleting repost: {e}")
+        raise HTTPException(status_code=500, detail="database error")
 
     return {"message": "repost deleted"}
 
 
 @router.get("/test")
 def testRoute(user: UserToken = Depends(VerifyToken)):
-    print(f"Recieved test request from uesr: {user.username}")
+    logger.info(f"Received test request from user: {user.username}")
 
     return {"Hello": f"{user.username}"}
