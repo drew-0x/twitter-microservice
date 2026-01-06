@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package tweet_service;
+
+message TweetStruct {
+    string id = 1;
+    string user_id = 2;
+    string content = 3;
+    int32 num_likes = 4;
+    int32 num_replys = 5;
+    int32 num_reposts = 6;
+    int64 created_at = 7;
+}
+
+message GetTweetsReq {
+    repeated string tweet_ids = 1;
+}
+
+message GetTweetsRes {
+    repeated TweetStruct tweets = 1;
+}
+
+service Tweet {
+    rpc GetTweets (GetTweetsReq) returns (GetTweetsRes);
+}
