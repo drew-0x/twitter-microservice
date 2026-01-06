@@ -12,7 +12,7 @@ RUN apt-get update && \
 
 COPY . .
 
-EXPOSE 50051
+EXPOSE 5000
 
 ENV OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED true
 CMD ["python", "main.py"]

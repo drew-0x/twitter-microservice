@@ -1,3 +1,5 @@
+# .env - Environment variables for Twitter Clone microservices
+
 # --- PostgreSQL Database Configuration ---
 [Database]
 DB_DATABASE = "twitter_clone"

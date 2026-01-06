@@ -28,5 +28,11 @@ class Config:
     def __contains__(self, key):
         return key in self._data
 
+    def get(self, key, default=None):
+        """Get a config value with optional default."""
+        if key in self._data:
+            return str(self._data[key])
+        return default
+
 
 config = Config()

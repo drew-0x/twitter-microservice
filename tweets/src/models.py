@@ -1,4 +1,14 @@
-from sqlalchemy import INT, Column, UUID, DateTime, String, false, func
+from sqlalchemy import (
+    INT,
+    Column,
+    UUID,
+    DateTime,
+    Index,
+    String,
+    UniqueConstraint,
+    false,
+    func,
+)
 
 from src.dependencies.db import Base
 
@@ -15,6 +25,12 @@ class Tweet(Base):
     num_replys = Column(INT, default=0)
     num_reposts = Column(INT, default=0)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_tweets_user_id", "user_id"),
+        Index("ix_tweets_created_at", "created_at"),
+        Index("ix_tweets_user_created", "user_id", "created_at"),
+    )
 
     def __init__(self, user_id, content) -> None:
         self.user_id = user_id
@@ -68,6 +84,12 @@ class ReplyTweet(Base):
     num_reposts = Column(INT, default=0)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
+    __table_args__ = (
+        Index("ix_reply_tweets_parent_id", "parent_id"),
+        Index("ix_reply_tweets_user_id", "user_id"),
+        Index("ix_reply_tweets_created_at", "created_at"),
+    )
+
     def __init__(self, user_id, parent_id, content) -> None:
         self.user_id = user_id
         self.parent_id = parent_id
@@ -106,6 +128,12 @@ class TweetLike(Base):
     tweet_id = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
+    __table_args__ = (
+        UniqueConstraint("user_id", "tweet_id", name="unique_like"),
+        Index("ix_tweet_like_user_id", "user_id"),
+        Index("ix_tweet_like_tweet_id", "tweet_id"),
+    )
+
     def __init__(self, user_id, tweet_id) -> None:
         self.user_id = user_id
         self.tweet_id = tweet_id
@@ -126,6 +154,12 @@ class TweetRepost(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False)
     tweet_id = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tweet_id", name="unique_repost"),
+        Index("ix_tweet_repost_user_id", "user_id"),
+        Index("ix_tweet_repost_tweet_id", "tweet_id"),
+    )
 
     def __init__(self, user_id, tweet_id) -> None:
         self.user_id = user_id
